@@ -1,0 +1,46 @@
+import { NextResponse } from 'next/server';
+import { unstable_cache } from 'next/cache';
+import { requireSession } from '@/lib/auth';
+import { findAdminByEmail, findUserByEmail } from '@/lib/users';
+import { readTab } from '@/lib/sheets';
+
+const allAudit = unstable_cache(
+  async () => (await readTab('AuditLog')).map(({ _row, ...r }) => r).sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
+  ['audit-all'], { revalidate: 30, tags: ['audit'] },
+);
+const bangkokDate = (value: string) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date(value));
+
+// อ่านอย่างเดียว: ไม่มี POST/PATCH/DELETE
+export async function GET(req: Request) {
+  const me = await requireSession(['Admin']);
+  if (!me) return NextResponse.json({ error: 'ไม่มีสิทธิ์เข้าถึง' }, { status: 403 });
+  const p = new URL(req.url).searchParams;
+  const q = (p.get('target') || '').trim().toLowerCase();
+  const editor = (p.get('editor') || '').trim().toLowerCase();
+  const field = p.get('field') || '';
+  const from = p.get('from') || '';
+  const to = p.get('to') || '';
+  const size = 20;
+  const page = Math.max(1, Number(p.get('page')) || 1);
+
+  const rows = (await allAudit()).filter((r) =>
+    (!q || r.targetEmail.toLowerCase().includes(q)) &&
+    (!editor || r.editorEmail.toLowerCase().includes(editor)) &&
+    (!field || r.field === field) &&
+    (!from || bangkokDate(r.timestamp) >= from) &&
+    (!to || bangkokDate(r.timestamp) <= to));
+  const pageRows = rows.slice((page - 1) * size, page * size);
+  const names = new Map<string, string>();
+  const enriched = await Promise.all(pageRows.map(async (row) => {
+    const key = row.editorEmail.toLowerCase();
+    if (!names.has(key)) {
+      const actor = await findUserByEmail(row.editorEmail);
+      const admin = actor ? null : await findAdminByEmail(row.editorEmail);
+      names.set(key, actor?.fullName || admin?.fullName || row.editorEmail);
+    }
+    return { ...row, editorName: names.get(key) };
+  }));
+  return NextResponse.json({ total: rows.length, page, pageSize: size, rows: enriched });
+}
