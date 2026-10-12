@@ -19,9 +19,9 @@ export default async function ConfirmPage({ searchParams }: { searchParams: Prom
   }
   const me = await requireSession(['Intern', 'DVE', 'Teacher']);
   if (!me) redirect('/login');
-  const raw = await findUserByEmail(me.email);
+  const raw = await findUserByEmail(me.email, true);
   const u = raw ? normaliseDveRow(raw) : null;
   if (!u || u.status === 'ปฏิเสธ') redirect('/login');
-  if (u.status === 'ยืนยันแล้ว') redirect('/rules');
-  return <ConfirmForm initial={{ email: u.email || me.email, fullName: u.fullName, nickname: u.nickname || '', role: u.role, institution: u.institution || '', level: u.level || (u.role === 'DVE' ? 'ปวส.' : ''), phone: u.phone, birthDate: u.birthDate, phoneMasked: maskPhone(u.phone), birthMasked: maskBirth(u.birthDate), startDate: u.startDate || raw?.actualStartDate || '', endDate: u.endDate || raw?.actualEndDate || '', consented: !!u.consentAt }} />;
+  if (['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(u.status)) redirect('/rules');
+  return <ConfirmForm initial={{ email: u.email || u.profileEmail || (me.email.startsWith('citizen:') ? 'ยืนยันด้วยเลขท้ายบัตรประชาชน' : me.email), fullName: u.fullName, nickname: u.nickname || '', role: u.role, institution: u.institution || '', level: u.level || (u.role === 'DVE' ? 'ปวส.' : ''), phone: u.phone, birthDate: u.birthDate, phoneMasked: maskPhone(u.phone), birthMasked: maskBirth(u.birthDate), startDate: u.startDate || raw?.actualStartDate || '', endDate: u.endDate || raw?.actualEndDate || '', consented: !!u.consentAt }} />;
 }

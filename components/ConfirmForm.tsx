@@ -17,7 +17,8 @@ export default function ConfirmForm({ initial, demo = false }: { initial: Initia
     return digits && !digits.startsWith('0') ? `0${digits.slice(0, 9)}` : digits;
   });
   const [birthDate, setBirthDate] = useState(initial.birthDate);
-  const [consent, setConsent] = useState(initial.consented);
+  // ต้องให้ผู้ใช้ยินยอมด้วยตนเองทุกครั้งที่เปิดแบบฟอร์มยืนยันนี้
+  const [consent, setConsent] = useState(false);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [institutions, setInstitutions] = useState<string[]>([]);
@@ -98,15 +99,15 @@ export default function ConfirmForm({ initial, demo = false }: { initial: Initia
             <span className="text-xs text-emerald-700 transition-transform group-open:rotate-180" aria-hidden="true">⌄</span>
           </summary>
           <div className="space-y-2 border-t border-emerald-100 px-3 py-3 text-xs leading-5 text-slate-600 sm:px-4 sm:py-3 sm:text-sm sm:leading-6">
-            <p>ระบบเก็บชื่อ เลขบัตรประชาชน อีเมล เบอร์โทรศัพท์ วันเกิด และข้อมูลการฝึกงาน เพื่อยืนยันตัวตน ประสานงาน และบริหารจัดการการฝึกงาน</p>
-            <p>หากยังอยู่ระหว่างการฝึกงาน จะเก็บข้อมูลไว้จนสิ้นสุดระยะเวลาการฝึกงาน และเก็บต่อไม่เกิน 3 เดือนเท่าที่จำเป็น หลังจากนั้นจะลบหรือทำให้ไม่สามารถระบุตัวบุคคลได้ เว้นแต่มีหน้าที่ตามกฎหมายให้ต้องเก็บต่อ</p>
-            <p>การเก็บ ใช้ เปิดเผย และรักษาความปลอดภัยข้อมูลดำเนินการตามพระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 รวมถึงหลักการแจ้งวัตถุประสงค์ ฐานการประมวลผล สิทธิของเจ้าของข้อมูล และมาตรการรักษาความมั่นคงปลอดภัยตามกฎหมาย</p>
+            <p>ระบบเก็บชื่อ เลขบัตรประชาชน อีเมล เบอร์โทรศัพท์ วันเกิด และข้อมูลการฝึกงาน เพื่อยืนยันตัวตนประสานงานและบริหารจัดการการฝึกงาน</p>
+            <p>หากยังอยู่ระหว่างการฝึกงานจะเก็บข้อมูลไว้จนสิ้นสุดระยะเวลาการฝึกงาน และเก็บต่อไม่เกิน 3 เดือนเท่าที่จำเป็นหลังจากนั้นจะลบหรือทำให้ไม่สามารถระบุตัวบุคคลได้เว้นแต่มีหน้าที่ตามกฎหมายให้ต้องเก็บต่อ</p>
+            <p>การเก็บใช้เปิดเผยและรักษาความปลอดภัยข้อมูลดำเนินการตามพระราชบัญญัติคุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 รวมถึงหลักการแจ้งวัตถุประสงค์ฐานการประมวลผลสิทธิของเจ้าของข้อมูลและมาตรการรักษาความมั่นคงปลอดภัยตามกฎหมาย</p>
           </div>
         </details>
 
         <label className="mt-2 flex items-start gap-2 text-xs leading-4 text-slate-700 sm:mt-3 sm:text-sm sm:leading-5">
           <input type="checkbox" className="mt-1" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-          <span>ข้าพเจ้าอ่านและยินยอมให้เก็บ ใช้ และประมวลผลข้อมูลตามรายละเอียดข้างต้น</span>
+          <span>ข้าพเจ้าอ่านและยินยอมให้เก็บและประมวลผลข้อมูลตามรายละเอียดข้างต้น</span>
         </label>
         {err && <p className="mt-3 text-sm text-red-600" role="alert">{err}</p>}
         <button className="btn mt-2 w-full sm:mt-3" disabled={busy || !consent}>{demo ? 'ทดลองยืนยันข้อมูล' : busy ? 'กำลังบันทึก...' : 'บันทึกข้อมูลและยืนยันตัวตน'}</button>

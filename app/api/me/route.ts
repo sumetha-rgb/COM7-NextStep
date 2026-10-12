@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireSession, saveUser } from '@/lib/auth';
-import { findUserByEmail, normaliseDveRow } from '@/lib/users';
+import { findUserByEmail, invalidateLookupCache, normaliseDveRow } from '@/lib/users';
 import { writeAudit, type AuditEntry } from '@/lib/audit';
 import { cleanPhone, isThaiPhone, isValidPastDate, maskBirth, maskPhone, normName, normalizeDateInput } from '@/lib/validators';
 import { sameOrigin } from '@/lib/security';
@@ -27,7 +27,7 @@ export async function PATCH(req: Request) {
   const u = source ? normaliseDveRow(source) : null;
   if (!u) return NextResponse.json({ error: 'ไม่พบข้อมูลผู้ใช้' }, { status: 404 });
   if (b.rulesConsent === true) {
-    if (u.status !== 'ยืนยันแล้ว') return NextResponse.json({ error: 'ต้องยืนยันตัวตนก่อนรับทราบกฎระเบียบ' }, { status: 409 });
+    if (!['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(u.status)) return NextResponse.json({ error: 'ต้องยืนยันตัวตนก่อนรับทราบกฎระเบียบ' }, { status: 409 });
     const rulesFuturePlan = String(b.rulesFuturePlan || '').trim();
     const rulesReason = String(b.rulesReason || '').trim();
     if (['DVE', 'Intern'].includes(u.role) && !rulesFuturePlan) return NextResponse.json({ error: 'กรุณาเลือกความประสงค์หลังสำเร็จการฝึกงาน' }, { status: 400 });
@@ -39,6 +39,14 @@ export async function PATCH(req: Request) {
       await saveUser({ ...u, rulesConsentAt, rulesFuturePlan, rulesReason } as unknown as typeof u);
     }
     return NextResponse.json({ ok: true, rulesConsentAt });
+  }
+  if (b.confirm && b.consent !== true) {
+    return NextResponse.json({ error: 'กรุณาอ่านและยินยอมการเก็บ ใช้ และประมวลผลข้อมูลก่อนบันทึก' }, { status: 400 });
+  }
+  // การส่งคำขอยืนยันซ้ำหลังคำขอแรกสำเร็จให้เป็น idempotent ไม่ตอบ 409
+  // และไม่เขียนข้อมูลหรือบันทึกประวัติซ้ำ
+  if (b.confirm && ['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(u.status)) {
+    return NextResponse.json({ ok: true, status: u.status, alreadyConfirmed: true });
   }
   if (u.status !== 'รอตรวจสอบ') return NextResponse.json({ error: 'ข้อมูลถูกยืนยันแล้ว ไม่สามารถแก้ไขเองได้' }, { status: 409 });
   const changes: AuditEntry[] = [];
@@ -71,7 +79,6 @@ export async function PATCH(req: Request) {
     if (v !== u.birthDate) { changes.push({ ...base, field: 'birthDate', oldValue: u.birthDate, newValue: v }); next.birthDate = v; }
   }
   if (b.confirm) {
-    if (b.consent !== true && !u.consentAt) return NextResponse.json({ error: 'กรุณายินยอมการเก็บและใช้ข้อมูลส่วนบุคคลก่อน' }, { status: 400 });
     if (!next.phone || (u.role !== 'Teacher' && !next.birthDate)) return NextResponse.json({ error: u.role === 'Teacher' ? 'กรุณากรอกเบอร์โทรให้ครบ' : 'กรุณากรอกเบอร์โทรและวันเกิดให้ครบ' }, { status: 400 });
     const now = new Date().toISOString();
     next.consentAt = u.consentAt || now;
@@ -86,7 +93,7 @@ export async function PATCH(req: Request) {
       // ไม่ใช่โครงสร้างเดียวกับ UserRow ภายในระบบ ให้สร้างแถวที่ยืนยันแล้วแยกแทน
       await appendRow('VerifiedUsers', {
         id: next.id || `verified-${Date.now()}`,
-        email: next.email || me.email,
+        email: next.email || (me.email.startsWith('citizen:') ? '' : me.email),
         fullName: next.fullName,
         phone: next.phone,
         birthDate: next.birthDate,
@@ -103,7 +110,7 @@ export async function PATCH(req: Request) {
         startDate: next.startDate,
         endDate: next.endDate,
         profileImageUrl: next.profileImageUrl,
-        profileEmail: next.email || me.email,
+        profileEmail: next.email || (me.email.startsWith('citizen:') ? '' : me.email),
         rulesConsentAt: next.rulesConsentAt,
         rulesFuturePlan: next.rulesFuturePlan,
         rulesReason: next.rulesReason,
@@ -116,6 +123,7 @@ export async function PATCH(req: Request) {
       await saveUser(next);
     }
     await writeAudit(changes);
+    invalidateLookupCache();
   }
   return NextResponse.json({ ok: true, status: next.status });
 }

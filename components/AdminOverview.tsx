@@ -11,7 +11,7 @@ type U = {
 };
 type Summary = { total: number; verified: number; byStatus: Record<string, number>; byRole: Record<string, { total: number; verified: number }> };
 const STATUS = ['รอตรวจสอบ', 'ยืนยันแล้ว', 'ปฏิเสธ'];
-const OVERVIEW_FILTER_STATUS = ['รอยืนยัน', 'รับทราบแล้ว', 'ยังไม่รับทราบ', 'ปฏิเสธ', 'ยังไม่ทราบ'];
+const OVERVIEW_FILTER_STATUS = ['รอยืนยัน', 'รับทราบแล้ว', 'ยังไม่รับทราบ', 'ยืนยันแล้ว', 'ปฏิเสธ'];
 const ROLES = ['Intern', 'DVE', 'Teacher', 'Admin'];
 const KPI_ROLES = ['Intern', 'DVE', 'Teacher'];
 const SURVEY_ROLES = ['DVE', 'Intern'];
@@ -37,15 +37,14 @@ function display(u: U, key: keyof U | 'index', index: number) {
   if (key === 'rulesReason') return u.rulesReason || '-';
   return String(u[key] || '-');
 }
-function statusLabel(status: string) {
-  return status === 'รอตรวจสอบ' ? 'รอยืนยัน' : status || '-';
-}
 function workflowStatus(u: U) {
-  if (u.role !== 'Admin' && u.status === 'ยืนยันแล้ว') return u.rulesConsentAt ? 'รับทราบแล้ว' : 'ยังไม่รับทราบ';
-  return u.status ? statusLabel(u.status) : 'ยังไม่ทราบ';
+  if (u.role !== 'Admin' && ['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(u.status)) return u.rulesConsentAt ? 'รับทราบแล้ว' : 'ยังไม่รับทราบ';
+  if (u.status === 'รอตรวจสอบ') return 'รอยืนยัน';
+  if (u.status === 'ยืนยันแล้ว' || u.status === 'ปฏิเสธ') return u.status;
+  return 'ยังไม่ทราบ';
 }
 function workflowBadge(u: U) {
-  if (u.role !== 'Admin' && u.status === 'ยืนยันแล้ว') return u.rulesConsentAt ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800';
+  if (u.role !== 'Admin' && ['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(u.status)) return u.rulesConsentAt ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800';
   if (!u.status) return 'bg-amber-100 text-amber-800';
   return u.status === 'ปฏิเสธ' ? 'border-rose-200 bg-rose-50 text-rose-800' : u.status === 'ยืนยันแล้ว' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-800';
 }
@@ -106,7 +105,8 @@ export default function AdminOverview({ rulesConsent = false, preview = false }:
     : columns.filter(([, key]) => key !== 'rulesReason');
   const rows = (preview && rulesConsent ? [{
     id: 'sample-not-interested', email: 'ตัวอย่าง', fullName: 'ตัวอย่าง ผู้เรียน', nickname: '', birthDate: '', phone: '0812345678', citizenId: '', institution: 'วิทยาลัยตัวอย่าง', level: 'ปวส.', startDate: '-', endDate: '-', role: 'DVE', status: 'ยืนยันแล้ว', rulesFuturePlan: 'ไม่สนใจ', rulesReason: 'ต้องการศึกษาต่อและสมัครงานในสาขาที่สนใจ',
-  } as U] : users).filter((u) => (!rulesConsent || SURVEY_ROLES.includes(u.role)) && (!inst || u.institution.toLocaleLowerCase().includes(inst.trim().toLocaleLowerCase())) && (!status || workflowStatus(u) === status) && (!role || u.role === role) && (!rulesConsent || planMatchesFilter(u.rulesFuturePlan, futurePlan)) && (!q || (u.fullName + ' ' + (rulesConsent ? '' : u.citizenId)).toLowerCase().includes(q.toLowerCase())));
+  } as U] : users).filter((u) => (!rulesConsent || SURVEY_ROLES.includes(u.role)) && (!inst || u.institution.toLocaleLowerCase().includes(inst.trim().toLocaleLowerCase())) && (!status || workflowStatus(u) === status) && (!role || u.role === role) && (!rulesConsent || planMatchesFilter(u.rulesFuturePlan, futurePlan)) && (!q || (u.fullName + ' ' + (rulesConsent ? '' : u.citizenId)).toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => Number(Boolean(b.rulesConsentAt)) - Number(Boolean(a.rulesConsentAt)));
   const surveyPopulation = users.filter((u) => SURVEY_ROLES.includes(u.role));
   const surveyStats = {
     dveResponded: surveyPopulation.filter((u) => u.role === 'DVE' && Boolean(u.rulesConsentAt)).length,

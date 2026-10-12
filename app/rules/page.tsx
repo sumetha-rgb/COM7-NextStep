@@ -12,9 +12,9 @@ export default async function RulesPage() {
   const me = await requireSession(['Intern', 'DVE', 'Teacher']);
   if (!me) redirect('/login');
 
-  const raw = await findUserByEmail(me.email);
+  const raw = await findUserByEmail(me.email, true);
   if (!raw || raw.status === 'ปฏิเสธ') redirect('/login');
-  if (raw.status !== 'ยืนยันแล้ว') redirect('/confirm');
+  if (!['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(raw.status)) redirect('/confirm');
   const name = raw.fullName || me.name || me.email;
   const profileImageUrl = raw.profileImageUrl || '';
 

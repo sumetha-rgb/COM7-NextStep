@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import type { RuleSet } from '@/content/rules';
+import { signOut } from 'next-auth/react';
+import FeedbackModal from '@/components/FeedbackModal';
 
 export default function RulesView({ rules, storageScope = 'user', serverConsented = false, serverFuturePlan = '', serverFutureReason = '', persistProgress = true }: { rules: RuleSet; storageScope?: string; serverConsented?: boolean; serverFuturePlan?: string; serverFutureReason?: string; persistProgress?: boolean }) {
   // เก็บสถานะ "อ่านแล้ว" ในเครื่อง และรีเซ็ตเมื่อมีการอัปเดตกฎ (updatedAt เปลี่ยน)
@@ -14,6 +16,7 @@ export default function RulesView({ rules, storageScope = 'user', serverConsente
   const [futureReason, setFutureReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [completionOpen, setCompletionOpen] = useState(false);
 
   useEffect(() => {
     setRead(rules.items.map(() => false));
@@ -50,7 +53,7 @@ export default function RulesView({ rules, storageScope = 'user', serverConsente
       return;
     }
     setSaving(true); setError('');
-    if (!persistProgress) { setConsented(true); setSaving(false); return; }
+    if (!persistProgress) { setConsented(true); setCompletionOpen(true); setSaving(false); return; }
     const response = await fetch('/api/me', {
       method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rulesConsent: true, rulesFuturePlan: futurePlan, rulesReason: futureReason }),
     }).catch(() => null);
@@ -60,7 +63,13 @@ export default function RulesView({ rules, storageScope = 'user', serverConsente
     }
     setConsented(true);
     if (persistProgress) try { localStorage.setItem(consentKey, 'true'); } catch {}
+    setCompletionOpen(true);
     setSaving(false);
+  }
+
+  async function signOutAfterCompletion() {
+    try { await signOut({ redirect: false }); }
+    finally { window.location.replace('/login'); }
   }
 
   function selectAll() {
@@ -77,6 +86,7 @@ export default function RulesView({ rules, storageScope = 'user', serverConsente
   const allDone = ready && done === total && futurePlanValid;
 
   return (
+    <>
     <section className="mx-auto max-w-3xl px-4 pb-32 pt-5 sm:px-6 sm:pt-10">
       {/* Hero */}
       <div className="rounded-[28px] bg-emerald-700 p-6 text-white shadow-lg shadow-emerald-900/10 sm:p-8">
@@ -199,5 +209,7 @@ export default function RulesView({ rules, storageScope = 'user', serverConsente
         {consented && <p className="mt-2 text-center text-xs font-medium text-emerald-700">รับทราบแล้ว ไม่สามารถยกเลิกการเลือกกฎระเบียบได้</p>}
       </div>
     </section>
+    {completionOpen && <FeedbackModal title="เสร็จสิ้นแล้ว" message="บันทึกการยินยอมเรียบร้อยแล้ว คุณสามารถออกจากระบบได้" tone="success" actionLabel="ออกจากระบบ" onClose={signOutAfterCompletion} onCancel={() => setCompletionOpen(false)} cancelLabel="อยู่ในระบบต่อ" />}
+    </>
   );
 }

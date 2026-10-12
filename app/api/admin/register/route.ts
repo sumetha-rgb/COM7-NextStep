@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { appendRow } from '@/lib/sheets';
-import { findAdminByEmail, findAdminByUsername } from '@/lib/users';
+import { emailUsedByAnotherAccount, findAdminByEmail, findAdminByUsername } from '@/lib/users';
 import { isEmail, normEmail, normName } from '@/lib/validators';
 import { hashPassword } from '@/lib/password';
 import { sameOrigin } from '@/lib/security';
@@ -21,6 +21,7 @@ export async function POST(req: Request) {
 
   try {
     if (await findAdminByEmail(email)) return NextResponse.json({ error: 'อีเมลนี้มีอยู่ในระบบแล้ว กรุณาเข้าสู่ระบบ Admin' }, { status: 409 });
+    if (await emailUsedByAnotherAccount(email)) return NextResponse.json({ error: 'อีเมลนี้ถูกใช้กับบัญชีอื่นในระบบแล้ว กรุณาใช้อีเมลอื่น' }, { status: 409 });
     if (await findAdminByUsername(username)) return NextResponse.json({ error: 'Username นี้มีอยู่ในระบบแล้ว' }, { status: 409 });
     await appendRow('AdminUsers', {
       id: crypto.randomUUID(), email, fullName, username, passwordHash: hashPassword(password),

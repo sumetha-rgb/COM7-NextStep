@@ -15,7 +15,7 @@ export const HOME: Record<Role, string> = {
   Intern: '/rules', DVE: '/rules', Teacher: '/rules', Admin: '/admin',
 };
 
-export const PUBLIC_PATHS = ['/', '/login', '/admin/login', '/admin/register', '/api/auth', '/api/otp/request', '/api/admin/register', '/api/institutions', '/demo', '/confirm'];
+export const PUBLIC_PATHS = ['/', '/login', '/returning-login', '/admin/login', '/admin/register', '/api/auth', '/api/otp/request', '/api/admin/register', '/api/institutions', '/demo', '/confirm'];
 
 const under = (p: string, base: string) => p === base || p.startsWith(base + '/');
 export const isPublic = (p: string) => PUBLIC_PATHS.some((b) => (b === '/' ? p === '/' : under(p, b)));

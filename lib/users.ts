@@ -61,9 +61,36 @@ export function normaliseDveRow(u: UserRow): UserRow {
     trainingDate: u.trainingDate,
   } as unknown as UserRow;
 }
-export async function findUserByEmail(email: string): Promise<UserRow | null> {
+export async function findUserByEmail(email: string, fresh = false): Promise<UserRow | null> {
+  const internalIdentity = /^citizen:(\d{13})$/.exec(String(email || '').trim());
+  if (internalIdentity) {
+    const data = fresh
+      ? await Promise.all([readAllUsers(), readVerifiedUsers()]).then(([users, verified]) => ({ users, verified }))
+      : await readLookupData();
+    const id = internalIdentity[1];
+    const matchesId = (raw: UserRow) => {
+      const user = normaliseDveRow(raw);
+      return String(user.citizenId || '').replace(/\D/g, '') === id || (raw._tab === 'DVE' && String(raw.email || '').replace(/\D/g, '') === id);
+    };
+    const verifiedUser = data.verified.find(matchesId);
+    if (verifiedUser) {
+      const source = data.users.find((u) => u._tab === 'DVE' && matchesId(u));
+      const original = source ? normaliseDveRow(source) : null;
+      return {
+        ...verifiedUser,
+        email: verifiedUser.email || original?.email || '',
+        profileEmail: verifiedUser.profileEmail || original?.profileEmail || '',
+        nickname: verifiedUser.nickname || original?.nickname || '',
+        profileImageUrl: verifiedUser.profileImageUrl || original?.profileImageUrl || '',
+      } as unknown as UserRow;
+    }
+    return data.users.find(matchesId) ?? null;
+  }
   const e = normEmail(email);
-  const { users, verified } = await readLookupData();
+  const data = fresh
+    ? await Promise.all([readAllUsers(), readVerifiedUsers()]).then(([users, verified]) => ({ users, verified }))
+    : await readLookupData();
+  const { users, verified } = data;
   const verifiedUser = verified.find((u) => normEmail(u.email) === e || normEmail(u.profileEmail) === e);
   if (verifiedUser) {
     // VerifiedUsers เป็นข้อมูลสรุป จึงเติมชื่อเล่น/รูปจากข้อมูล DVE ต้นฉบับ
@@ -88,7 +115,73 @@ export async function findUserByCitizenId(citizenId: string): Promise<UserRow | 
   const id = String(citizenId ?? '').replace(/[-\s]/g, '');
   const match = (u: UserRow) => String(u.citizenId ?? '').replace(/[-\s]/g, '') === id || (u._tab === 'DVE' && String(u.email ?? '').replace(/[-\s]/g, '') === id);
   const { users, verified } = await readLookupData();
-  return verified.find(match) ?? users.find(match) ?? null;
+  // Preferir a origem DVE: a linha de VerifiedUsers pode não conter profileEmail.
+  // Assim a rota que vincula o e-mail após validar o ID atualiza a linha correta.
+  return users.find((u) => u._tab === 'DVE' && match(u)) ?? verified.find(match) ?? users.find(match) ?? null;
+}
+function accountKey(raw: UserRow): string {
+  const user = normaliseDveRow(raw);
+  const citizenId = String(user.citizenId || '').replace(/\D/g, '');
+  if (citizenId.length === 13) return `citizen:${citizenId}`;
+  if (user.id) return `${user.role}:${user.id}`;
+  return `${raw._tab || 'unknown'}:${raw._row || ''}`;
+}
+export async function emailUsedByAnotherAccount(email: string, owner?: UserRow | { citizenId?: string; id?: string; role?: string; _tab?: string; _row?: number }): Promise<boolean> {
+  const target = normEmail(email);
+  if (!target) return false;
+  const [users, verified, admins] = await Promise.all([readAllUsers(), readVerifiedUsers(), readTab('AdminUsers')]);
+  const ownerKey = owner ? accountKey(owner as UserRow) : '';
+  for (const raw of [...users, ...verified]) {
+    const user = normaliseDveRow(raw);
+    if (normEmail(user.email) !== target && normEmail(user.profileEmail) !== target) continue;
+    if (!ownerKey || accountKey(raw) !== ownerKey) return true;
+  }
+  for (const admin of admins) {
+    if (normEmail(admin.email) === target && (!ownerKey || accountKey(admin) !== ownerKey)) return true;
+  }
+  return false;
+}
+export async function findUniqueStudentByCitizenLast5(last5: string): Promise<UserRow | null> {
+  const suffix = String(last5 ?? '').replace(/\D/g, '');
+  if (suffix.length !== 5) return null;
+  const { users, verified } = await readLookupData();
+  const byCitizenId = new Map<string, UserRow>();
+  // VerifiedUsers comes last so its current status wins, while the source row
+  // can still supply an email when the verified snapshot does not have one.
+  for (const raw of [...users, ...verified]) {
+    const user = normaliseDveRow(raw);
+    const citizenId = String(user.citizenId || '').replace(/\D/g, '');
+    if (citizenId.length !== 13 || !citizenId.endsWith(suffix) || !['Intern', 'DVE'].includes(String(user.role)) || user.status === 'ปฏิเสธ') continue;
+    const previous = byCitizenId.get(citizenId);
+    byCitizenId.set(citizenId, previous ? ({
+      ...user,
+      email: user.email || previous.email,
+      profileEmail: user.profileEmail || previous.profileEmail,
+    } as unknown as UserRow) : user);
+  }
+  return byCitizenId.size === 1 ? [...byCitizenId.values()][0] : null;
+}
+export async function findConfirmedStudentByNameAndLast5(firstName: string, lastName: string, last5: string): Promise<UserRow | null> {
+  const comparableName = (value: unknown) => normPersonName(value).replace(/^(นางสาว|เด็กชาย|เด็กหญิง|อาจารย์|นาย|นาง|น\.ส\.|ด\.ช\.|ด\.ญ\.)\s*/i, '');
+  const fullName = comparableName(`${firstName} ${lastName}`);
+  const suffix = String(last5 ?? '').replace(/\D/g, '');
+  if (!firstName.trim() || !lastName.trim() || suffix.length !== 5) return null;
+  const { users, verified } = await readLookupData();
+  const matches = new Map<string, UserRow>();
+  for (const raw of [...users, ...verified]) {
+    const user = normaliseDveRow(raw);
+    const citizenId = String(user.citizenId || '').replace(/\D/g, '');
+    if (citizenId.length !== 13 || !citizenId.endsWith(suffix) || !['Intern', 'DVE'].includes(String(user.role))) continue;
+    if (!['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(user.status) || !user.consentAt) continue;
+    if (comparableName(user.fullName) !== fullName) continue;
+    const previous = matches.get(citizenId);
+    matches.set(citizenId, previous ? ({
+      ...user,
+      email: user.email || previous.email,
+      profileEmail: user.profileEmail || previous.profileEmail,
+    } as unknown as UserRow) : user);
+  }
+  return matches.size === 1 ? [...matches.values()][0] : null;
 }
 export async function findVerifiedByEmail(email: string) { const e = normEmail(email); return (await readVerifiedUsers()).find((u) => normEmail(u.email) === e || normEmail(u.profileEmail) === e) ?? null; }
 export async function findVerifiedByCitizenId(citizenId: string) { const id = String(citizenId ?? '').replace(/[-\s]/g, ''); return (await readVerifiedUsers()).find((u) => String(u.citizenId ?? '').replace(/[-\s]/g, '') === id) ?? null; }
