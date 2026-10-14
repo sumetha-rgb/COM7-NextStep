@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
 import { requireSession, saveUser } from '@/lib/auth';
-import { findUserByEmail, listUsersCached } from '@/lib/users';
+import { findUserByEmail, listUsersCached, normaliseDveRow } from '@/lib/users';
 import { writeAudit, type AuditEntry } from '@/lib/audit';
 import { isRole, isStatus, ROLES, STATUSES } from '@/lib/permissions';
 import { sameOrigin } from '@/lib/security';
+import { getManagedRules } from '@/lib/managed-rules';
+import { readTab } from '@/lib/sheets';
 
 export async function GET() {
   const me = await requireSession(['Admin']);
   if (!me) return NextResponse.json({ error: 'ไม่มีสิทธิ์เข้าถึง' }, { status: 403 });
   const users = await listUsersCached();
+  const [managedRules, acknowledgements] = await Promise.all([getManagedRules(), readTab('RuleAcknowledgements')]);
   const byStatus: Record<string, number> = Object.fromEntries(STATUSES.map((s) => [s, 0]));
   const byRole: Record<string, { total: number; verified: number }> = Object.fromEntries(ROLES.map((r) => [r, { total: 0, verified: 0 }]));
   for (const u of users) {
@@ -16,7 +19,15 @@ export async function GET() {
     if (u.role in byRole) { byRole[u.role].total++; if (u.status === 'ยืนยันแล้ว') byRole[u.role].verified++; }
   }
   return NextResponse.json({
-    users: users.map((u) => ({ id: u.id, email: u.email || u.profileEmail || '', fullName: u.fullName, phone: u.phone, birthDate: u.birthDate, institution: u.institution, role: u.role, status: u.status, rulesConsentAt: u.rulesConsentAt || '', rulesFuturePlan: u.rulesFuturePlan || '', rulesReason: u.rulesReason || '', verifiedAt: u.verifiedAt, citizenId: u.citizenId, level: u.level, startDate: u.startDate, endDate: u.endDate, profileImageUrl: u.profileImageUrl || '', nickname: u.nickname, major: u.major, address: u.address, collegeProvince: u.collegeProvince, collegeRegion: u.collegeRegion, branchId: u.branchId, branch: u.branch, am: u.am, rm: u.rm, groupShop: u.groupShop, sector: u.sector, province: u.province, trainingDate: u.trainingDate })),
+    users: users.map((u) => {
+      const email = (u.email || u.profileEmail || (u.citizenId ? `citizen:${String(u.citizenId).replace(/\D/g, '')}` : '')).trim().toLowerCase();
+      const rules = managedRules[u.role as keyof typeof managedRules];
+      const acknowledgement = acknowledgements.find((row) => row.role === u.role && row.email.toLowerCase() === email);
+      const currentAcknowledgement = acknowledgement
+        ? Number(acknowledgement.version) === (rules?.version || 1)
+        : (rules?.version || 1) === 1 && Boolean(u.rulesConsentAt);
+      return { id: u.id, email: u.email || u.profileEmail || '', fullName: u.fullName, phone: u.phone, birthDate: u.birthDate, institution: u.institution, role: u.role, status: u.status, rulesConsentAt: currentAcknowledgement ? u.rulesConsentAt || '' : '', rulesFuturePlan: u.rulesFuturePlan || '', rulesReason: u.rulesReason || '', verifiedAt: u.verifiedAt, citizenId: u.citizenId, level: u.level, startDate: u.startDate, endDate: u.endDate, profileImageUrl: u.profileImageUrl || '', nickname: u.nickname, major: u.major, address: u.address, collegeProvince: u.collegeProvince, collegeRegion: u.collegeRegion, branchId: u.branchId, branch: u.branch, am: u.am, rm: u.rm, groupShop: u.groupShop, sector: u.sector, province: u.province, trainingDate: u.trainingDate };
+    }),
     summary: { total: users.length, verified: byStatus['ยืนยันแล้ว'], byStatus, byRole },
   });
 }
@@ -26,8 +37,9 @@ export async function PATCH(req: Request) {
   const me = await requireSession(['Admin']);
   if (!me) return NextResponse.json({ error: 'ไม่มีสิทธิ์เข้าถึง' }, { status: 403 });
   const b = await req.json().catch(() => ({}));
-  const u = await findUserByEmail(String(b.lookupEmail || b.email || ''));
-  if (!u) return NextResponse.json({ error: 'ไม่พบผู้ใช้' }, { status: 404 });
+  const rawUser = await findUserByEmail(String(b.lookupEmail || b.email || ''));
+  if (!rawUser) return NextResponse.json({ error: 'ไม่พบผู้ใช้' }, { status: 404 });
+  const u = normaliseDveRow(rawUser);
 
   const next = { ...u };
   const changes: AuditEntry[] = [];

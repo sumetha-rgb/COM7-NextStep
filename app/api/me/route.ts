@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 import { requireSession, saveUser } from '@/lib/auth';
-import { findUserByEmail, invalidateLookupCache, normaliseDveRow } from '@/lib/users';
+import { findUserByEmail, findVerifiedByCitizenId, invalidateLookupCache, normaliseDveRow } from '@/lib/users';
 import { writeAudit, type AuditEntry } from '@/lib/audit';
 import { cleanPhone, isThaiPhone, isValidPastDate, maskBirth, maskPhone, normName, normalizeDateInput } from '@/lib/validators';
 import { sameOrigin } from '@/lib/security';
-import { appendRow, updateDveNickname } from '@/lib/sheets';
+import { appendRow, updateDveNickname, updateInternRosterFields } from '@/lib/sheets';
+import { getManagedRules, saveRuleAcknowledgement } from '@/lib/managed-rules';
+import { normalizeFuturePlanValue } from '@/content/rules';
 
 export async function GET() {
   const me = await requireSession(['Intern', 'DVE', 'Teacher']);
@@ -28,16 +30,21 @@ export async function PATCH(req: Request) {
   if (!u) return NextResponse.json({ error: 'ไม่พบข้อมูลผู้ใช้' }, { status: 404 });
   if (b.rulesConsent === true) {
     if (!['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(u.status)) return NextResponse.json({ error: 'ต้องยืนยันตัวตนก่อนรับทราบกฎระเบียบ' }, { status: 409 });
-    const rulesFuturePlan = String(b.rulesFuturePlan || '').trim();
+    const currentRules = (await getManagedRules())[u.role as 'Intern' | 'DVE' | 'Teacher'];
+    if (!currentRules.enabled) return NextResponse.json({ error: 'กฎระเบียบยังไม่เปิดให้รับทราบ กรุณาติดต่อผู้ดูแลระบบ' }, { status: 409 });
+    if (Number(b.rulesVersion) !== (currentRules.version || 1)) return NextResponse.json({ error: 'กฎระเบียบมีการเปลี่ยนแปลง กรุณาโหลดหน้าใหม่และอ่านอีกครั้ง' }, { status: 409 });
+    const rulesFuturePlan = normalizeFuturePlanValue(String(b.rulesFuturePlan || '').trim());
     const rulesReason = String(b.rulesReason || '').trim();
     if (['DVE', 'Intern'].includes(u.role) && !rulesFuturePlan) return NextResponse.json({ error: 'กรุณาเลือกความประสงค์หลังสำเร็จการฝึกงาน' }, { status: 400 });
-    if (['DVE', 'Intern'].includes(u.role) && rulesFuturePlan === 'ไม่สนใจ' && !rulesReason) return NextResponse.json({ error: 'กรุณากรอกเหตุผล' }, { status: 400 });
+    if (['DVE', 'Intern'].includes(u.role) && currentRules.futurePlanRequired && !currentRules.futurePlanOptions?.some((option) => normalizeFuturePlanValue(option.value) === rulesFuturePlan)) return NextResponse.json({ error: 'คำตอบแผนหลังฝึกงานไม่ถูกต้อง' }, { status: 400 });
+    if (['DVE', 'Intern'].includes(u.role) && rulesFuturePlan === 'ไม่สนใจทำงานต่อ' && !rulesReason) return NextResponse.json({ error: 'กรุณากรอกเหตุผล' }, { status: 400 });
     const rulesConsentAt = !u.rulesConsentAt || u.rulesFuturePlan !== rulesFuturePlan || u.rulesReason !== rulesReason
       ? new Date().toISOString()
       : u.rulesConsentAt;
     if (rulesConsentAt !== u.rulesConsentAt) {
       await saveUser({ ...u, rulesConsentAt, rulesFuturePlan, rulesReason } as unknown as typeof u);
     }
+    await saveRuleAcknowledgement(me.email, u.role as 'Intern' | 'DVE' | 'Teacher', currentRules.version || 1);
     return NextResponse.json({ ok: true, rulesConsentAt });
   }
   if (b.confirm && b.consent !== true) {
@@ -88,17 +95,16 @@ export async function PATCH(req: Request) {
   }
 
   if (changes.length) {
-    if (source?._tab === 'DVE' && b.confirm) {
-      // DVE เป็นข้อมูลต้นฉบับจาก Excel: ห้ามเขียนทับแถวเดิม เพราะคอลัมน์ Excel
-      // ไม่ใช่โครงสร้างเดียวกับ UserRow ภายในระบบ ให้สร้างแถวที่ยืนยันแล้วแยกแทน
-      await appendRow('VerifiedUsers', {
+    if (source && ['DVE', 'INTERN'].includes(String(source._tab)) && b.confirm && source._layout !== 'legacy') {
+      // DVE/INTERN เป็นข้อมูลต้นทางจาก Excel: คงแถวต้นฉบับไว้ แล้วบันทึกข้อมูลมาตรฐานลง VerifiedUsers
+      const verifiedRow = {
         id: next.id || `verified-${Date.now()}`,
         email: next.email || (me.email.startsWith('citizen:') ? '' : me.email),
         fullName: next.fullName,
         phone: next.phone,
         birthDate: next.birthDate,
         institution: next.institution,
-        role: 'DVE',
+        role: next.role,
         status: 'ยืนยันแล้ว',
         verifiedAt: next.verifiedAt,
         createdAt: next.createdAt,
@@ -106,7 +112,7 @@ export async function PATCH(req: Request) {
         citizenId: next.citizenId,
         username: next.username,
         passwordHash: next.passwordHash,
-        level: next.level || 'ปวส.',
+        level: next.level || (next.role === 'DVE' ? 'ปวส.' : ''),
         startDate: next.startDate,
         endDate: next.endDate,
         profileImageUrl: next.profileImageUrl,
@@ -114,11 +120,19 @@ export async function PATCH(req: Request) {
         rulesConsentAt: next.rulesConsentAt,
         rulesFuturePlan: next.rulesFuturePlan,
         rulesReason: next.rulesReason,
-      });
-      if (next.nickname !== undefined && source.phone !== next.nickname) {
+      };
+      const alreadyVerified = await findVerifiedByCitizenId(next.citizenId);
+      if (alreadyVerified) await saveUser({ ...alreadyVerified, ...verifiedRow } as unknown as typeof source);
+      else await appendRow('VerifiedUsers', verifiedRow);
+      if (next.role === 'DVE' && next.nickname !== undefined && source.phone !== next.nickname) {
         // คอลัมน์ phone ของข้อมูล DVE เดิมคือคอลัมน์ชื่อเล่น จึงอัปเดตเฉพาะช่องนี้
         await updateDveNickname(source, next.nickname);
       }
+      if (next.role === 'Intern' && source._layout === 'roster') {
+        await updateInternRosterFields(source, next as unknown as Record<string, unknown>);
+      }
+    } else if (source && source._tab === 'INTERN' && source._layout === 'roster') {
+      await updateInternRosterFields(source, next as unknown as Record<string, unknown>);
     } else {
       await saveUser(next);
     }

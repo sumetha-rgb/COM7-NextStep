@@ -1,7 +1,8 @@
 import { redirect } from 'next/navigation';
 import { requireSession } from '@/lib/auth';
 import { findUserByEmail } from '@/lib/users';
-import { RULES, type RuleRole } from '@/content/rules';
+import { normalizeFuturePlanValue, type RuleRole } from '@/content/rules';
+import { getManagedRules, getRuleAcknowledgement } from '@/lib/managed-rules';
 import RulesView from '@/components/RulesView';
 import MobileBottomNav from '@/components/MobileBottomNav';
 import UserHeader from '@/components/UserHeader';
@@ -17,12 +18,17 @@ export default async function RulesPage() {
   if (!['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(raw.status)) redirect('/confirm');
   const name = raw.fullName || me.name || me.email;
   const profileImageUrl = raw.profileImageUrl || '';
+  const rules = (await getManagedRules())[me.role as RuleRole];
+  const acknowledgement = await getRuleAcknowledgement(me.email, me.role as RuleRole);
+  const hasCurrentAcknowledgement = acknowledgement
+    ? Number(acknowledgement.version) === (rules.version || 1)
+    : (rules.version || 1) === 1 && Boolean(raw.rulesConsentAt);
 
   // เนื้อหาเลือกจาก role ใน session เท่านั้น (ไม่รับพารามิเตอร์จากผู้ใช้)
   return (
     <main className="min-h-dvh bg-[linear-gradient(180deg,#ecfdf5_0%,#f8fafc_30%,#f8fafc_100%)]">
       <UserHeader name={name} profileImageUrl={profileImageUrl} />
-      <RulesView rules={RULES[me.role as RuleRole]} serverConsented={Boolean(raw.rulesConsentAt)} serverFuturePlan={raw.rulesFuturePlan || ''} serverFutureReason={raw.rulesReason || ''} />
+      <RulesView rules={rules} serverConsented={Boolean(raw.rulesConsentAt) && hasCurrentAcknowledgement} serverFuturePlan={hasCurrentAcknowledgement ? normalizeFuturePlanValue(raw.rulesFuturePlan || '') : ''} serverFutureReason={raw.rulesReason || ''} />
       <MobileBottomNav />
     </main>
   );

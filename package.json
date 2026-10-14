@@ -6,7 +6,10 @@
     "dev": "node scripts/clean-next.cjs && node scripts/next-safe.cjs dev -p 3000",
     "build": "node scripts/next-safe.cjs build",
     "start": "next start",
-    "seed": "node --env-file=.env.local scripts/seed-sheet.mjs"
+    "seed": "node --env-file=.env.local scripts/seed-sheet.mjs",
+    "migrate:intern": "node --env-file=.env.local scripts/migrate-intern-sheet.mjs",
+    "migrate:intern-layout": "node --env-file=.env.local scripts/migrate-intern-layout.mjs",
+    "update:intern-headers": "node --env-file=.env.local scripts/update-intern-university-headers.mjs"
   },
   "dependencies": {
     "googleapis": "^144.0.0",

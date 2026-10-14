@@ -2,6 +2,7 @@
 import { google } from 'googleapis';
 
 const TABS = {
+  INTERN: ['ลำดับ', 'รหัสบัตรประชาชน', 'ชื่อ-นามสกุล', 'ชื่อเล่น', 'วันเดือนปีเกิด', 'เบอร์ติดต่อ', 'สถานศึกษา', 'ระดับชั้น', 'สาขาวิชา', 'ที่อยู่', 'จังหวัดที่ตั้งมหาวิทยาลัย', 'ภูมิภาคที่ตั้งมหาวิทยาลัย', 'ID', 'สาขา', 'AM', 'RM', 'Group Shop', 'ภาค', 'จังหวัด', 'วันที่เข้ารับการอบรม SKH', 'วันที่เริ่มงาน', 'วันที่สิ้นสุด', 'profileImageUrl', 'profileEmail'],
   Users: ['id', 'email', 'fullName', 'phone', 'birthDate', 'institution', 'role', 'status', 'verifiedAt', 'createdAt', 'consentAt', 'citizenId', 'username', 'passwordHash', 'level', 'startDate', 'endDate', 'profileImageUrl', 'profileEmail', 'rulesConsentAt', 'rulesFuturePlan', 'rulesReason'],
   Teachers: ['id', 'email', 'fullName', 'phone', 'birthDate', 'institution', 'role', 'status', 'verifiedAt', 'createdAt', 'consentAt', 'citizenId', 'username', 'passwordHash', 'level', 'startDate', 'endDate', 'profileImageUrl', 'profileEmail', 'rulesConsentAt', 'rulesFuturePlan', 'rulesReason'],
   // หัวคอลัมน์ที่แสดงในชีท DVE ใช้ตามแบบ Excel จริง 22 คอลัมน์
@@ -16,8 +17,10 @@ const TABS = {
 const now = new Date().toISOString();
 const SAMPLE = {
   Institutions: [['1', 'มหาวิทยาลัยตัวอย่าง'], ['2', 'วิทยาลัยเทคนิคตัวอย่าง']],
+  INTERN: [
+    ['1', '1100000000001', 'สมชาย ฝึกงาน', 'สมชาย', '2003-05-10', '0811111111', 'มหาวิทยาลัยตัวอย่าง', 'ปวช.', 'ตัวอย่าง', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'intern@example.com'],
+  ],
   Users: [
-    ['u1', 'intern@example.com', 'สมชาย ฝึกงาน', '0811111111', '2003-05-10', 'มหาวิทยาลัยตัวอย่าง', 'Intern', 'รอตรวจสอบ', '', now, '', '1100000000001', '', '', 'ปวช.', '', ''],
     ['u2', 'dve@example.com', 'สมหญิง ทวิภาคี', '0822222222', '2006-03-21', 'วิทยาลัยเทคนิคตัวอย่าง', 'DVE', 'รอตรวจสอบ', '', now, '', '1100000000002', '', '', 'ปวส.', '', ''],
     ['u3', 'teacher@example.com', 'อาจารย์ ใจดี', '0833333333', '1985-11-02', 'มหาวิทยาลัยตัวอย่าง', 'Teacher', 'รอตรวจสอบ', '', now, '', '', '', '', '', '', ''],
     ['u4', 'admin@example.com', 'ผู้ดูแล ระบบ', '0844444444', '1990-01-15', 'บริษัท', 'Admin', 'ยืนยันแล้ว', now, now, now, '', '', '', '', '', ''],
@@ -44,9 +47,21 @@ await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: 
   repeatCell: { range: { sheetId: existing[t] }, cell: { userEnteredFormat: { numberFormat: { type: 'TEXT' } } }, fields: 'userEnteredFormat.numberFormat' } })) } });
 
 for (const [tab, headers] of Object.entries(TABS)) {
-  await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tab}!A1`, valueInputOption: 'RAW', requestBody: { values: [headers] } });
+  let canSeedSample = true;
+  if (tab === 'INTERN') {
+    const current = await sheets.spreadsheets.values.get({ spreadsheetId, range: 'INTERN!A1:X1' });
+    const currentHeaders = current.data.values?.[0] || [];
+    if (!currentHeaders.length) {
+      await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tab}!A1`, valueInputOption: 'RAW', requestBody: { values: [headers] } });
+    } else if (!headers.every((header, index) => currentHeaders[index] === header)) {
+      canSeedSample = false;
+      console.log('SKIP INTERN header/data preserved; run migrate:intern-layout after reviewing its dry run');
+    }
+  } else {
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tab}!A1`, valueInputOption: 'RAW', requestBody: { values: [headers] } });
+  }
   const cur = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tab}!A2:A2` });
-  if (SAMPLE[tab] && !(cur.data.values || []).length) {
+  if (canSeedSample && SAMPLE[tab] && !(cur.data.values || []).length) {
     await sheets.spreadsheets.values.update({ spreadsheetId, range: `${tab}!A2`, valueInputOption: 'RAW', requestBody: { values: SAMPLE[tab] } });
   }
   console.log('OK', tab);

@@ -1,14 +1,24 @@
 import { unstable_cache, revalidateTag } from 'next/cache';
-import { readTab, updateRow, type Row } from './sheets';
+import { appendRow, readTab, readTabs, updateInternRosterFields, updateRow, type Row } from './sheets';
 import { normEmail, normName, normPersonName } from './validators';
 import type { Role } from './permissions';
 
 export type UserRow = Row;
-const USER_TABS = ['Users', 'Teachers', 'DVE'] as const;
+// อ่าน INTERN ก่อน Users เพื่อให้ข้อมูล Intern หลังย้ายใช้เป็นข้อมูลหลัก
+// ยังคงอ่าน Users ไว้รองรับ role อื่นและข้อมูลเดิมที่ยังไม่ได้แยก
+const USER_TABS = ['INTERN', 'Users', 'Teachers', 'DVE'] as const;
 async function readAllUsers() {
-  return (await Promise.all(USER_TABS.map((tab) => readTab(tab)))).flat();
+  const rows = await readTabs(USER_TABS);
+  return USER_TABS.flatMap((tab) => rows[tab] || []);
 }
-async function readVerifiedUsers() { return readTab('VerifiedUsers'); }
+async function readUserLookupTabs() {
+  const rows = await readTabs([...USER_TABS, 'VerifiedUsers']);
+  return {
+    users: USER_TABS.flatMap((tab) => rows[tab] || []),
+    verified: rows.VerifiedUsers || [],
+  };
+}
+async function readVerifiedUsers() { return (await readTabs(['VerifiedUsers'])).VerifiedUsers || []; }
 
 // ลดการอ่าน Google Sheets ซ้ำทุกคำขอในช่วงกิจกรรมที่มีผู้ใช้เข้าพร้อมกัน
 // ข้อมูลต้นทางจะถูก refresh สูงสุดทุก 30 วินาที และรวมคำขอที่เข้าพร้อมกันเป็นครั้งเดียว
@@ -20,9 +30,9 @@ const adminCache = new Map<string, { row: UserRow | null; expiresAt: number }>()
 async function readLookupData() {
   if (lookupCache && lookupCache.expiresAt > Date.now()) return lookupCache;
   if (!lookupPromise) {
-    lookupPromise = Promise.all([readAllUsers(), readVerifiedUsers()]).then(([users, verified]) => {
-      lookupCache = { users, verified, expiresAt: Date.now() + LOOKUP_CACHE_MS };
-      return { users, verified };
+    lookupPromise = readUserLookupTabs().then((data) => {
+      lookupCache = { ...data, expiresAt: Date.now() + LOOKUP_CACHE_MS };
+      return data;
     }).finally(() => { lookupPromise = null; });
   }
   const data = await lookupPromise;
@@ -32,18 +42,21 @@ export function invalidateLookupCache() { lookupCache = null; }
 export function normaliseDveRow(u: UserRow): UserRow {
   // ข้อมูล DVE รุ่นเก่าถูกนำเข้าโดยใช้คอลัมน์ Excel เดิม ทำให้ email = เลขบัตร
   // และคอลัมน์ถัด ๆ ไปเลื่อนตำแหน่ง จัดรูปเฉพาะตอนอ่านแสดงผล โดยไม่เขียนทับข้อมูลต้นฉบับ
-  const looksLikeImportedExcel = u._tab === 'DVE' && /^\d[\d\s-]{10,}$/.test(String(u.email || '')) && !['Intern', 'DVE', 'Teacher', 'Admin'].includes(String(u.role || ''));
+  if (u._tab === 'INTERN' && u._layout === 'legacy') return u;
+  const isInternRoster = u._tab === 'INTERN' && u._layout === 'roster';
+  const looksLikeImportedExcel = (u._tab === 'DVE' || isInternRoster) && /^\d[\d\s-]{10,}$/.test(String(u.email || '')) && !['Intern', 'DVE', 'Teacher', 'Admin'].includes(String(u.role || ''));
   if (!looksLikeImportedExcel) return u;
   return {
     ...u,
+    _normalizedRoster: true,
     _sourceEmail: u.email,
     email: u.profileEmail || '',
     citizenId: u.email,
     phone: u.institution || u.phone,
     institution: u.role,
-    role: 'DVE',
-    status: ['รอตรวจสอบ', 'ยืนยันแล้ว', 'ปฏิเสธ'].includes(u.status) ? u.status : 'รอตรวจสอบ',
-    level: 'ปวส.',
+    role: isInternRoster ? 'Intern' : 'DVE',
+    status: isInternRoster ? 'รอตรวจสอบ' : ['รอตรวจสอบ', 'ยืนยันแล้ว', 'ปฏิเสธ'].includes(u.status) ? u.status : 'รอตรวจสอบ',
+    level: isInternRoster ? u.status : 'ปวส.',
     startDate: u.actualStartDate || u.startDate,
     endDate: u.actualEndDate || u.endDate,
     nickname: u.phone,
@@ -65,7 +78,7 @@ export async function findUserByEmail(email: string, fresh = false): Promise<Use
   const internalIdentity = /^citizen:(\d{13})$/.exec(String(email || '').trim());
   if (internalIdentity) {
     const data = fresh
-      ? await Promise.all([readAllUsers(), readVerifiedUsers()]).then(([users, verified]) => ({ users, verified }))
+      ? await readUserLookupTabs()
       : await readLookupData();
     const id = internalIdentity[1];
     const matchesId = (raw: UserRow) => {
@@ -74,7 +87,7 @@ export async function findUserByEmail(email: string, fresh = false): Promise<Use
     };
     const verifiedUser = data.verified.find(matchesId);
     if (verifiedUser) {
-      const source = data.users.find((u) => u._tab === 'DVE' && matchesId(u));
+      const source = data.users.find((u) => ['DVE', 'INTERN'].includes(String(u._tab)) && matchesId(u));
       const original = source ? normaliseDveRow(source) : null;
       return {
         ...verifiedUser,
@@ -88,14 +101,14 @@ export async function findUserByEmail(email: string, fresh = false): Promise<Use
   }
   const e = normEmail(email);
   const data = fresh
-    ? await Promise.all([readAllUsers(), readVerifiedUsers()]).then(([users, verified]) => ({ users, verified }))
+    ? await readUserLookupTabs()
     : await readLookupData();
   const { users, verified } = data;
   const verifiedUser = verified.find((u) => normEmail(u.email) === e || normEmail(u.profileEmail) === e);
   if (verifiedUser) {
     // VerifiedUsers เป็นข้อมูลสรุป จึงเติมชื่อเล่น/รูปจากข้อมูล DVE ต้นฉบับ
     // ในกรณีที่แถวเดิมมีข้อมูล แต่ตอนยืนยันไม่ได้คัดลอกฟิลด์นี้มา
-    const source = users.find((u) => u._tab === 'DVE' && (
+    const source = users.find((u) => ['DVE', 'INTERN'].includes(String(u._tab)) && (
       normEmail(u.profileEmail) === e ||
       String(u.email || '').replace(/[\s-]/g, '') === String(verifiedUser.citizenId || '').replace(/[\s-]/g, '')
     ));
@@ -202,7 +215,23 @@ export async function findAdminByUsername(username: string): Promise<UserRow | n
   return (await readTab('AdminUsers')).find((r) => String(r.username ?? '').trim().toLowerCase() === u) ?? null;
 }
 export async function saveUser(u: UserRow) {
-  await updateRow(u._tab === 'VerifiedUsers' ? 'VerifiedUsers' : u._tab === 'DVE' ? 'DVE' : u._tab === 'Teachers' ? 'Teachers' : 'Users', u);
+  if ((u._tab === 'INTERN' || u._tab === 'DVE') && u._normalizedRoster) {
+    if (u._tab === 'INTERN') await updateInternRosterFields(u, u as unknown as Record<string, unknown>);
+    const snapshot = {
+        id: u.id || `verified-${Date.now()}`, email: u.email || u.profileEmail || '', fullName: u.fullName || '',
+        phone: u.phone || '', birthDate: u.birthDate || '', institution: u.institution || '', role: u.role || 'Intern',
+        status: u.status || 'รอตรวจสอบ', verifiedAt: u.verifiedAt || '', createdAt: u.createdAt || '', consentAt: u.consentAt || '',
+        citizenId: u.citizenId || '', username: u.username || '', passwordHash: u.passwordHash || '', level: u.level || '',
+        startDate: u.startDate || '', endDate: u.endDate || '', profileImageUrl: u.profileImageUrl || '',
+        profileEmail: u.profileEmail || u.email || '', rulesConsentAt: u.rulesConsentAt || '',
+        rulesFuturePlan: u.rulesFuturePlan || '', rulesReason: u.rulesReason || '',
+    };
+    const existing = await findVerifiedByCitizenId(snapshot.citizenId);
+    if (existing) await updateRow('VerifiedUsers', existing, snapshot);
+    else await appendRow('VerifiedUsers', snapshot);
+  } else {
+    await updateRow(u._tab === 'VerifiedUsers' ? 'VerifiedUsers' : u._tab === 'DVE' ? 'DVE' : u._tab === 'Teachers' ? 'Teachers' : u._tab === 'INTERN' ? 'INTERN' : 'Users', u);
+  }
   invalidateLookupCache();
   revalidateTag('users');
 }

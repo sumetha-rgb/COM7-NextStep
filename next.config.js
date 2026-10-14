@@ -2,6 +2,8 @@ const path = require('path');
 
 /** @type {import('next').NextConfig} */
 module.exports = {
+  // Keep dev chunks separate so `next build` cannot replace files used by a running dev server.
+  distDir: process.env.NODE_ENV === 'development' ? 'next-dev' : '.next',
   reactStrictMode: true,
   webpack(config) {
     config.resolve.alias['@'] = path.resolve(__dirname);

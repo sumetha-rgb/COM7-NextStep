@@ -26,7 +26,7 @@ export async function POST(req: Request) {
   try {
     let rawUser: UserRow | null = mode === 'student' ? await findUserByCitizenId(String(body.citizenId || '')) : await findUserByEmail(email);
     let user: UserRow | null = rawUser ? normaliseDveRow(rawUser) : null;
-    // อาจารย์ใหม่สมัครครั้งแรกได้โดยไม่ต้องมีข้อมูลอยู่ก่อนใน Users
+    // อาจารย์ใหม่สมัครครั้งแรกได้โดยไม่ต้องมีข้อมูลอยู่ก่อนใน Teachers
     if (mode === 'teacher' && !rawUser) {
       if (await emailUsedByAnotherAccount(email)) return NextResponse.json({ error: 'อีเมลนี้ถูกใช้กับบัญชีอื่นในระบบแล้ว กรุณาใช้อีเมลของตนเอง' }, { status: 409 });
       const fullName = normName(body.fullName);

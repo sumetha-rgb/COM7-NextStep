@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import SignOutButton from './SignOutButton';
 import FeedbackModal from './FeedbackModal';
 
@@ -9,12 +9,17 @@ const MENU = [
   { href: '/admin', label: 'ภาพรวม', icon: 'dashboard' as const },
   { href: '/admin/audit', label: 'ประวัติการแก้ไขข้อมูล', icon: 'history' as const },
   { href: '/admin/rules-preview', label: 'ตัวอย่างกฎระเบียบ', icon: 'book' as const },
+  { href: '/admin/rules-settings', label: 'จัดการกฎระเบียบ', icon: 'book' as const },
   { href: '/admin/rules-consent', label: 'การประเมิน', icon: 'check' as const },
 ];
 export default function Sidebar({ email, fullName, username }: { email: string; fullName: string; username: string }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+  useEffect(() => {
+    setPendingPath(null);
+  }, [path]);
   const initials = (fullName || 'A').trim().slice(0, 1).toUpperCase();
   return (
     <>
@@ -30,9 +35,16 @@ export default function Sidebar({ email, fullName, username }: { email: string; 
         <nav className="space-y-2">
           {MENU.map((m) => {
             const active = m.href === '/admin' ? path === '/admin' : path.startsWith(m.href);
-            return <Link key={m.href} href={m.href} onClick={() => setOpen(false)}
+            const pending = pendingPath === m.href;
+            return <Link key={m.href} href={m.href} aria-current={active ? 'page' : undefined} aria-busy={pending}
+              onClick={(event) => {
+                setOpen(false);
+                if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0 || active) return;
+                setPendingPath(m.href);
+              }}
               className={`group flex items-center gap-3 rounded-xl border px-3 py-3 text-sm font-medium transition ${active ? 'border-emerald-600 bg-emerald-600 text-white shadow-md shadow-emerald-900/10' : 'border-transparent text-slate-700 hover:border-emerald-100 hover:bg-emerald-50 hover:text-emerald-800'}`}>
-              <Icon name={m.icon} active={active} />{m.label}
+              {pending ? <span className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" aria-hidden="true" /> : <Icon name={m.icon} active={active} />}
+              {m.label}{pending && <span className="ml-auto text-xs text-emerald-700" role="status">กำลังโหลด…</span>}
             </Link>;
           })}
         </nav>
