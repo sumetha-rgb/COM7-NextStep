@@ -126,7 +126,14 @@ export async function findUserByEmail(email: string, fresh = false): Promise<Use
 }
 export async function findUserByCitizenId(citizenId: string): Promise<UserRow | null> {
   const id = String(citizenId ?? '').replace(/[-\s]/g, '');
-  const match = (u: UserRow) => String(u.citizenId ?? '').replace(/[-\s]/g, '') === id || (u._tab === 'DVE' && String(u.email ?? '').replace(/[-\s]/g, '') === id);
+  const match = (u: UserRow) => {
+    // INTERN/DVE roster rows are mapped by source column order on read. Normalize
+    // them before comparing: in an INTERN roster the raw `citizenId` alias is
+    // the university-region column, while the actual citizen ID is in `email`.
+    const normalized = normaliseDveRow(u);
+    return String(normalized.citizenId ?? '').replace(/[-\s]/g, '') === id
+      || (u._tab === 'DVE' && String(u.email ?? '').replace(/[-\s]/g, '') === id);
+  };
   const { users, verified } = await readLookupData();
   // Preferir a origem DVE: a linha de VerifiedUsers pode não conter profileEmail.
   // Assim a rota que vincula o e-mail após validar o ID atualiza a linha correta.
@@ -231,6 +238,29 @@ export async function saveUser(u: UserRow) {
     else await appendRow('VerifiedUsers', snapshot);
   } else {
     await updateRow(u._tab === 'VerifiedUsers' ? 'VerifiedUsers' : u._tab === 'DVE' ? 'DVE' : u._tab === 'Teachers' ? 'Teachers' : u._tab === 'INTERN' ? 'INTERN' : 'Users', u);
+  }
+  invalidateLookupCache();
+  revalidateTag('users');
+}
+
+// Bind the email used for the five-digit fallback to the existing student
+// account without creating a VerifiedUsers snapshot for an unconfirmed user.
+export async function saveStudentEmailByCitizenId(citizenId: string, email: string) {
+  const id = String(citizenId ?? '').replace(/\D/g, '');
+  const normalizedEmail = normEmail(email);
+  const { users, verified } = await readUserLookupTabs();
+  const matchesId = (raw: UserRow) => String(normaliseDveRow(raw).citizenId ?? '').replace(/\D/g, '') === id;
+  const source = users.find((raw) => ['INTERN', 'DVE'].includes(String(raw._tab)) && matchesId(raw));
+  const verifiedUser = verified.find(matchesId);
+
+  if (!source && !verifiedUser) throw new Error('Student account not found while saving email');
+  if (source?._tab === 'INTERN' && source._layout === 'roster') {
+    await updateInternRosterFields(source, { profileEmail: normalizedEmail });
+  } else if (source) {
+    await updateRow(source._tab === 'DVE' ? 'DVE' : 'INTERN', source, { profileEmail: normalizedEmail });
+  }
+  if (verifiedUser) {
+    await updateRow('VerifiedUsers', verifiedUser, { email: normalizedEmail, profileEmail: normalizedEmail });
   }
   invalidateLookupCache();
   revalidateTag('users');

@@ -69,7 +69,7 @@ export default function LoginForm({ portal, initialMode = 'student' }: { portal:
 
   async function submitFallback(e: React.FormEvent) {
     e.preventDefault(); setBusy(true); setMsg(null);
-    const r = await signIn('citizen-fallback', { redirect: false, last5, mode, portal });
+    const r = await signIn('citizen-fallback', { redirect: false, last5, mode, portal, email });
     if (!r || r.error) { setMsg({ t: 'err', s: 'ข้อมูลไม่ถูกต้อง หรือใช้สิทธิ์สำรองครบจำนวนแล้ว' }); setBusy(false); return; }
     const s = await getSession();
     router.replace(s?.user?.role === 'Admin' ? '/admin' : '/confirm');

@@ -2,10 +2,10 @@ import type { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { getServerSession } from 'next-auth';
 import { verifyOtp } from './otp';
-import { eligible, emailUsedByAnotherAccount, findConfirmedStudentByNameAndLast5, findUniqueStudentByCitizenLast5, findUserByCitizenId, findUserByEmail, findAdminByUsername, invalidateLookupCache, normaliseDveRow, saveUser, type Portal } from './users';
+import { eligible, emailUsedByAnotherAccount, findConfirmedStudentByNameAndLast5, findUniqueStudentByCitizenLast5, findUserByCitizenId, findUserByEmail, findAdminByUsername, invalidateLookupCache, normaliseDveRow, saveStudentEmailByCitizenId, saveUser, type Portal } from './users';
 import { verifyPassword } from './password';
 import { isRole, type Role } from './permissions';
-import { normEmail, normPersonName } from './validators';
+import { isEmail, normEmail, normPersonName } from './validators';
 import { DEMO_USERS, isDemo } from './demo';
 import { rateLimit } from './ratelimit';
 
@@ -62,9 +62,11 @@ export const authOptions: NextAuthOptions = {
       },
     }),
     CredentialsProvider({
-      id: 'citizen-fallback', name: 'citizen-fallback', credentials: { last5: {}, portal: {}, mode: {} },
+      id: 'citizen-fallback', name: 'citizen-fallback', credentials: { email: {}, last5: {}, portal: {}, mode: {} },
       async authorize(c, req) {
         if (c?.portal !== 'user' || c?.mode !== 'student') return null;
+        const email = normEmail(c?.email);
+        if (!isEmail(email)) return null;
         const last5 = String(c?.last5 ?? '').replace(/\D/g, '');
         const forwarded = req.headers?.['x-forwarded-for'];
         const ip = String(Array.isArray(forwarded) ? forwarded[0] : forwarded || req.headers?.['x-real-ip'] || 'unknown').split(',')[0].trim();
@@ -74,9 +76,11 @@ export const authOptions: NextAuthOptions = {
         if (!user || user.role !== 'Intern' && user.role !== 'DVE' || user.status === 'ปฏิเสธ') return null;
         const citizenDigits = String(user.citizenId || '').replace(/\D/g, '');
         if (citizenDigits.length !== 13 || citizenDigits.slice(-5) !== last5) return null;
-        const accountEmail = normEmail(user.email || user.profileEmail);
-        const sessionKey = accountEmail || `citizen:${citizenDigits}`;
-        return { id: user.id || sessionKey, email: sessionKey, name: user.fullName, role: user.role as Role };
+        const existingEmail = normEmail(user.email || user.profileEmail);
+        if (existingEmail && existingEmail !== email) return null;
+        if (await emailUsedByAnotherAccount(email, rawUser || user)) return null;
+        await saveStudentEmailByCitizenId(citizenDigits, email);
+        return { id: user.id || email, email, name: user.fullName, role: user.role as Role };
       },
     }),
     CredentialsProvider({
