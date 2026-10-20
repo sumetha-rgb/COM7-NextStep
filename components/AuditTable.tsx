@@ -1,7 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-type A = { timestamp: string; editorEmail: string; editorName?: string; editorRole: string; targetEmail: string; field: string; oldValue: string; newValue: string; action: string; note: string };
+type A = { timestamp: string; editorEmail: string; editorName?: string; editorRole: string; targetEmail: string; targetName?: string; field: string; oldValue: string; newValue: string; action: string; note: string };
 const FIELDS: [string, string][] = [['fullName', 'ชื่อ-นามสกุล'], ['nickname', 'ชื่อเล่น'], ['institution', 'สถานศึกษา'], ['phone', 'เบอร์โทร'], ['birthDate', 'วันเกิด'], ['status', 'สถานะ'], ['role', 'บทบาท']];
 
 export default function AuditTable() {
@@ -29,8 +29,8 @@ export default function AuditTable() {
     <div className="space-y-4">
       <h1 className="text-xl font-bold">ประวัติการแก้ไขข้อมูล</h1>
       <form onSubmit={(e) => { e.preventDefault(); setPage(1); load(1, f); }} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
-        <input className="input" placeholder="บุคคล (อีเมลที่ถูกแก้)" value={f.target} onChange={(e) => set('target', e.target.value)} />
-        <input className="input" placeholder="ผู้แก้ (อีเมล)" value={f.editor} onChange={(e) => set('editor', e.target.value)} />
+        <input className="input" aria-label="กรอกชื่อผู้ที่แก้ไขข้อมูล" placeholder="กรอกชื่อผู้ที่แก้ไขข้อมูล" value={f.target} onChange={(e) => set('target', e.target.value)} />
+        <input className="input" aria-label="กรอกอีเมล์ของผู้แก้ไข" placeholder="กรอกอีเมล์ของผู้แก้ไข" value={f.editor} onChange={(e) => set('editor', e.target.value)} />
         <select className="input" value={f.field} onChange={(e) => set('field', e.target.value)}><option value="">ทุกฟิลด์</option>{FIELDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         <input className="input" type="date" value={f.from} onChange={(e) => set('from', e.target.value)} aria-label="ตั้งแต่วันที่" />
         <input className="input" type="date" value={f.to} onChange={(e) => set('to', e.target.value)} aria-label="ถึงวันที่" />
@@ -45,7 +45,7 @@ export default function AuditTable() {
               <tr key={i} className="border-t align-top">
                 <td className="whitespace-nowrap px-3 py-2">{fmt(r.timestamp)}</td>
                 <td className="px-3 py-2"><span className="font-medium">{r.editorName || r.editorEmail}</span><br /><span className="text-xs text-gray-500">{r.editorRole}</span></td>
-                <td className="px-3 py-2">{r.targetEmail}</td>
+                <td className="px-3 py-2"><span className="font-medium">{r.targetName || r.targetEmail}</span><br /><span className="text-xs text-gray-500">{r.targetEmail}</span></td>
                 <td className="px-3 py-2">{FIELDS.find(([k]) => k === r.field)?.[1] ?? r.field}</td>
                 <td className="px-3 py-2"><span className="text-gray-500">{r.oldValue || '(ว่าง)'}</span> → <b>{r.newValue || '(ว่าง)'}</b></td>
                 <td className="px-3 py-2">{actionLabel(r.action)}</td><td className="px-3 py-2">{r.note || '-'}</td>

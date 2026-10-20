@@ -26,8 +26,53 @@ export async function PATCH(req: Request) {
   if (!me) return NextResponse.json({ error: 'ไม่มีสิทธิ์เข้าถึง' }, { status: 403 });
   const b = await req.json().catch(() => ({}));
   const source = await findUserByEmail(me.email); // แก้ได้เฉพาะแถวของตัวเอง
-  const u = source ? normaliseDveRow(source) : null;
-  if (!u) return NextResponse.json({ error: 'ไม่พบข้อมูลผู้ใช้' }, { status: 404 });
+  if (!source) return NextResponse.json({ error: 'ไม่พบข้อมูลผู้ใช้' }, { status: 404 });
+  const u = normaliseDveRow(source);
+  // Profile details remain editable after identity confirmation. Restrict this
+  // path to the three self-service fields shown in the profile dialog.
+  if (b.profileEdit === true) {
+    const changes: AuditEntry[] = [];
+    const base = { editorEmail: me.email, editorRole: me.role, targetEmail: u.email, action: 'self_edit' };
+    const next = { ...u };
+    if (b.fullName !== undefined) {
+      const value = normName(b.fullName);
+      if (value.length < 3 || value.length > 100) return NextResponse.json({ error: 'ชื่อ-นามสกุลไม่ถูกต้อง' }, { status: 400 });
+      if (value !== u.fullName) { changes.push({ ...base, field: 'fullName', oldValue: u.fullName, newValue: value }); next.fullName = value; }
+    }
+    if (u.role !== 'Teacher' && b.nickname !== undefined) {
+      const value = String(b.nickname).normalize('NFC').trim();
+      if (value.length > 80) return NextResponse.json({ error: 'ชื่อเล่นต้องไม่เกิน 80 ตัวอักษร' }, { status: 400 });
+      if (value !== (u.nickname || '')) { changes.push({ ...base, field: 'nickname', oldValue: u.nickname || '', newValue: value }); next.nickname = value; }
+    }
+    if (b.phone !== undefined) {
+      if (!isThaiPhone(String(b.phone))) return NextResponse.json({ error: 'เบอร์โทรศัพท์ไม่ถูกต้อง (เช่น 0812345678)' }, { status: 400 });
+      const value = cleanPhone(String(b.phone));
+      if (value !== u.phone) { changes.push({ ...base, field: 'phone', oldValue: u.phone, newValue: value }); next.phone = value; }
+    }
+    if (changes.length) {
+      if (['DVE', 'INTERN'].includes(String(source._tab)) && source._layout !== 'legacy') {
+        const verified = await findVerifiedByCitizenId(next.citizenId);
+        if (verified) {
+          await saveUser({ ...verified, fullName: next.fullName, nickname: next.nickname, phone: next.phone } as unknown as typeof source);
+          // The source roster remains the fallback account record on a later login.
+          if (source._tab === 'DVE' && next.nickname !== undefined) await updateDveNickname(source, next.nickname);
+          if (source._tab === 'INTERN' && source._layout === 'roster') {
+            await updateInternRosterFields(source, { fullName: next.fullName, nickname: next.nickname, phone: next.phone });
+          }
+        }
+        else await saveUser(next);
+        if (next.role === 'DVE' && next.nickname !== undefined) await updateDveNickname(source, next.nickname);
+        if (source._tab === 'INTERN' && source._layout === 'roster') {
+          await updateInternRosterFields(source, { fullName: next.fullName, nickname: next.nickname, phone: next.phone });
+        }
+      } else {
+        await saveUser(next);
+      }
+      await writeAudit(changes);
+      invalidateLookupCache();
+    }
+    return NextResponse.json({ ok: true, fullName: next.fullName, nickname: next.nickname || '', phone: next.phone });
+  }
   if (b.rulesConsent === true) {
     if (!['ยืนยันแล้ว', 'ยืนยันแล้วแก้ไข'].includes(u.status)) return NextResponse.json({ error: 'ต้องยืนยันตัวตนก่อนรับทราบกฎระเบียบ' }, { status: 409 });
     const currentRules = (await getManagedRules())[u.role as 'Intern' | 'DVE' | 'Teacher'];
