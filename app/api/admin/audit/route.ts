@@ -3,9 +3,16 @@ import { unstable_cache } from 'next/cache';
 import { requireSession } from '@/lib/auth';
 import { findAdminByEmail, findUserByEmail } from '@/lib/users';
 import { readTab } from '@/lib/sheets';
+type AuditRow = {
+  timestamp: string;
+  editorEmail: string;
+  targetEmail: string;
+  field: string;
+  [key: string]: string;
+};
 
 const allAudit = unstable_cache(
-  async () => (await readTab('AuditLog')).map(({ _row, ...r }) => r).sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
+  async (): Promise<AuditRow[]> => (await readTab('AuditLog')).map(({ _row, ...r }) => r as AuditRow).sort((a, b) => b.timestamp.localeCompare(a.timestamp)),
   ['audit-all'], { revalidate: 30, tags: ['audit'] },
 );
 const bangkokDate = (value: string) => new Intl.DateTimeFormat('en-CA', {
@@ -36,7 +43,7 @@ export async function GET(req: Request) {
     }
     return names.get(key)!;
   };
-  const rows = (await Promise.all(auditRows.map(async (r) => ({
+  const rows = (await Promise.all(auditRows.map(async (r): Promise<AuditRow & { editorName: string; targetName: string }> => ({
     ...r,
     editorName: await resolveName(r.editorEmail),
     targetName: await resolveName(r.targetEmail),
